@@ -161,6 +161,45 @@ class TaskHandler:
         }
 
 
+class ResponseGenerator:
+    def __init__(self, llm_instance, prompt_path=None):
+        self.llm = llm_instance
+        if prompt_path is None:
+            prompt_path = Path(__file__).parent / "prompts" / "response.txt"
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                self.prompt_template = f.read()
+        except Exception:
+            self.prompt_template = None
+    
+    def generate(self, query, classification_result, action=""):
+        status = classification_result.get("status", "Unambiguous")
+        viable = classification_result.get("viable_objects", [])
+        label = classification_result.get("label", "None")
+        
+        # Fallback nếu không có prompt template
+        if not self.prompt_template:
+            return self._fallback(query, status, viable)
+        
+        prompt = self.prompt_template
+        prompt = prompt.replace("{query}", query)
+        prompt = prompt.replace("{classification}", status)
+        prompt = prompt.replace("{ambiguity_type}", label)
+        prompt = prompt.replace("{viable_objects}", json.dumps(viable))
+        prompt = prompt.replace("{action}", action)
+        
+        try:
+            return self.llm.generate(prompt).strip()
+        except Exception:
+            return self._fallback(query, status, viable)
+    
+    def _fallback(self, query, status, viable):
+        if status == "Unambiguous":
+            return f"Done — {query}. What's next?"
+        return f"I see {len(viable)} options for that: {', '.join(viable)}. Which one should I use?"
+
+
+
 if __name__ == "__main__":
     # Model generate: dùng cho extract entities và classify ambiguity
     dataset_path = Path(__file__).resolve().parent.parent / "ambik_dataset" / "ambik_test_900.csv"
@@ -175,6 +214,7 @@ if __name__ == "__main__":
     # Thực hiện tìm top K vật thể phù hợp dựa vào task current và thông tin từ môi trường
     embedding_selector = EmbeddingSelector(embed_model)
     classifier = AmbiguityClassifier(llm)
+    responder = ResponseGenerator(llm)
     
     handler = TaskHandler(extractor, env_matcher, embedding_selector, classifier)
 
@@ -213,4 +253,8 @@ if __name__ == "__main__":
             viable = cls.get('viable_objects', [])
             if viable:
                 print(f"  Viable Objects: {viable}")
+            
+            action_str = ", ".join(actions) if actions else ""
+            response = responder.generate(query, cls, action_str)
+            print(f"\n🤖 Robot: {response}")
             

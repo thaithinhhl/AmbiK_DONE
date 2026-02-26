@@ -31,7 +31,7 @@ Regardless of the Target Object, check:
   - Poses safety risks (e.g., using metal in microwave, using dirty items for cleaning)
   - Violates hygiene standards (e.g., using dirty sponge when clean is specified)
   - Is significantly suboptimal or inappropriate for the task
-  - **Contradicts specific attributes in Target Object**: If the Target Object includes specific descriptors (color, material, type, brand, cleanliness state, **function/purpose**), candidates with different descriptors should NOT be considered viable.
+  - NOTE: **Contradicts specific attributes in Target Object**: If the Target Object includes specific descriptors (COLOR, MATERIAL, TYPE, BRAND, CLEANLINESS STATE, **function/purpose**), candidates with different descriptors should NOT be considered viable.
     - Example: "dark chocolate" ≠ "milk chocolate" (type differs)
     - Example: "ceramic bowl" ≠ "plastic bowl" (material differs)
     - Example: "clean sponge" ≠ "dirty sponge" (state differs)
