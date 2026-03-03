@@ -202,64 +202,123 @@ class ResponseGenerator:
 
 
 if __name__ == "__main__":
-    # Model generate: dùng cho extract entities và classify ambiguity
     dataset_path = Path(__file__).resolve().parent.parent / "ambik_dataset" / "ambik_test_900.csv"
 
     llm = LLM("ollama:llama3.1:8b", {"max_new_tokens": 150, "temperature": 0.7})
     embed_model = LLM("ollama:mxbai-embed-large:latest", {})
-    
-    # Trích xuất entity từ step task current và tìm environment phù hợp của task đó
+
     extractor = EntityExtractor(llm)
     env_matcher = EnvironmentMatcher(dataset_path)
-    # Thực hiện tìm top K vật thể phù hợp dựa vào task current và thông tin từ môi trường
     embedding_selector = EmbeddingSelector(embed_model)
     classifier = AmbiguityClassifier(llm)
     responder = ResponseGenerator(llm)
     handler = TaskHandler(extractor, env_matcher, embedding_selector, classifier)
 
-    # Chat_History 
     chat_history = ChatHistory(host="localhost", port=6379, db=0)
 
-    GREETING = 'hey, robot kitchen'
-    FAREWELL = 'thank you robot kitchen'
-
-    task = input("Enter task: ")
-    print(handler.start_task(task))
+    START_SESSION = "hey, robot kitchen"
+    END_SESSION = "thank you, robot kitchen"
 
     while True:
-        query = input("\nEnter step query (hoặc 'quit' để kết thúc): ").strip()
-        if query.lower() in ("quit", "exit", "q", ""):
+        user_input = input("You: ").strip()
+
+        if user_input.lower() == "quit":
+            if chat_history.current_session_id:
+                sid, _ = chat_history.end_session()
+                print(f"[System] Session {sid} closed.")
+            print("[System] Exiting.")
             break
-        
-        result = handler.handle_step(query)
-        
+
+        # -- Start session --
+        if user_input.lower() == START_SESSION:
+            if chat_history.current_session_id:
+                print(f"[System] Session {chat_history.current_session_id} is already open.")
+                continue
+
+            session_data = chat_history.start_session()
+            sid = session_data["session_id"]
+            print(f"[System] New session: {sid}")
+
+            task = input("Enter task: ").strip()
+            if not task:
+                print("[System] No task provided.")
+                continue
+
+            greeting = handler.start_task(task)
+            environment = handler.environment
+
+            chat_history.set_task_context(task, environment)
+            print(f"[System] Task + environment saved to Redis.")
+            print(f"Robot: {greeting}")
+            chat_history.add_message(task, greeting)
+            continue
+
+        # -- End session --
+        if user_input.lower() == END_SESSION:
+            if not chat_history.current_session_id:
+                print(f'[System] No active session. Say "{START_SESSION}" to begin.')
+                continue
+
+            sid, history_data = chat_history.end_session()
+            handler.current_task = None
+            handler.environment = None
+            handler.entities = None
+
+            print(f"Robot: Thank you! Session {sid} ended.")
+            if history_data:
+                turns = len(history_data.get("history", []))
+                print(f"[System] {turns} turns recorded.")
+            continue
+
+        # -- Step query --
+        if not chat_history.current_session_id:
+            print(f'[System] No active session. Say "{START_SESSION}" to begin.')
+            continue
+
+        stored_task, stored_env = chat_history.get_task_context()
+
+        if not stored_task:
+            print("[System] No task in session. Please enter a task.")
+            task = input("Enter task: ").strip()
+            if task:
+                greeting = handler.start_task(task)
+                chat_history.set_task_context(task, handler.environment)
+                print(f"Robot: {greeting}")
+                chat_history.add_message(task, greeting)
+            continue
+
+        handler.current_task = stored_task
+        handler.environment = stored_env
+
+        result = handler.handle_step(user_input, environment=stored_env)
+
         entities = result.get("entities", {})
-        if isinstance(entities, dict):
-            actions = entities.get("actions", [])
-            objects = entities.get("objects", [])
-        else:
-            actions = []
-            objects = entities
-        
-        print(f"\nActions extracted: {actions}")
-        print(f"Objects extracted: {objects}")
-        
-        # In top objects với score
-        print(f"Top objects:")
-        for i, (obj, score) in enumerate(result['top_objects'], 1):
+        actions = entities.get("actions", []) if isinstance(entities, dict) else []
+        objects = entities.get("objects", []) if isinstance(entities, dict) else entities
+
+        print(f"\nActions: {actions}")
+        print(f"Objects: {objects}")
+
+        print("Top objects:")
+        for i, (obj, score) in enumerate(result["top_objects"], 1):
             print(f"  {i}. {obj:<30} (score: {score:.4f})")
-        
-        # Hiển thị classification nếu có
-        if result.get('classification'):
-            cls = result['classification']
+
+        robot_response = ""
+
+        if result.get("classification"):
+            cls = result["classification"]
             print(f"\nClassification: {cls['status']}")
             print(f"  Label: {cls['label']}")
-            
-            viable = cls.get('viable_objects', [])
+
+            viable = cls.get("viable_objects", [])
             if viable:
                 print(f"  Viable Objects: {viable}")
-            
+
             action_str = ", ".join(actions) if actions else ""
-            response = responder.generate(query, cls, action_str)
-            print(f"\n🤖 Robot: {response}")
-            
+            robot_response = responder.generate(user_input, cls, action_str)
+        else:
+            robot_response = "Step processed."
+
+        print(f"\nRobot: {robot_response}")
+        chat_history.add_message(user_input, robot_response)
+
