@@ -83,38 +83,6 @@ Analyze the nature of differences between the "Viable" candidates and choose **o
 }
 ```
 
-**Example 1b: Ambiguous Safety (when query is ambiguous about cleanliness)**
-- Query: "Use the sponge to wipe down the counter"
-- Action: "wipe down"
-- Target Object: "sponge"
-- Top K Candidates: ["clean sponge", "dirty sponge"]
-- Analysis: Query doesn't specify cleanliness. Both can substitute "sponge" and physically wipe. But "dirty sponge" poses hygiene risk.
-- Output:
-```json
-{
-  "classification": "Ambiguous",
-  "ambiguity_type": "Safety",
-  "viable_objects": ["clean sponge", "dirty sponge"],
-  "reasoning": "Both sponges can substitute the target and perform wiping. However, 'dirty sponge' poses hygiene risks. The query is ambiguous about which sponge to use, creating a Safety ambiguity."
-}
-```
-
-**Example 1c: Unambiguous (no viable options - all unsafe)**
-- Query: "Use the sponge to wipe down the counter"
-- Action: "wipe down"
-- Target Object: "sponge"
-- Top K Candidates: ["metal scraper", "steel wool", "abrasive pad"]
-- Analysis: None of the candidates can safely/appropriately substitute "sponge" for wiping (they're too abrasive and will damage surfaces).
-- Output:
-```json
-{
-  "classification": "Unambiguous",
-  "ambiguity_type": "None",
-  "viable_objects": [],
-  "reasoning": "No candidates are viable. All Top K items are abrasive tools unsuitable for substituting a sponge in wiping tasks. The instruction is clear (use sponge) but no suitable sponge is available."
-}
-```
-
 **Example 2: Common Sense**
 - Query: "Put the leftovers in the bowl"
 - Action: "put in"
@@ -197,44 +165,6 @@ Analyze the nature of differences between the "Viable" candidates and choose **o
   "ambiguity_type": "Preferences",
   "viable_objects": ["dark chocolate tablet", "milk chocolate tablet", "white chocolate tablet"],
   "reasoning": "Query uses generic 'chocolate tablet' without specific type descriptor. All three candidates are viable chocolates, differing only in flavor preference."
-}
-```
-
-**Example 5: Direct Suitability (tool needed for action)**
-- Query: "Slice the baguette"
-- Action: "slice"
-- Target Object: "baguette"
-- Top K Candidates: ["bread knife", "honey", "energy bar"]
-- Analysis:
-  - Substitution Test: "honey", "energy bar" cannot replace "baguette" for slicing.
-  - Direct Suitability Test: "bread knife" is a tool suitable for performing "slice" action.
-  - Viable candidates: ["bread knife"] (only 1 → Unambiguous)
-- Output:
-```json
-{
-  "classification": "Unambiguous",
-  "ambiguity_type": "None",
-  "viable_objects": ["bread knife"],
-  "reasoning": "Only 'bread knife' passed Direct Suitability Test as a tool capable of performing the 'slice' action. 'honey' and 'energy bar' failed both tests."
-}
-```
-
-**Example 6: Multiple tools viable → Ambiguous**
-- Query: "Cut the tomato"
-- Action: "cut"
-- Target Object: "tomato"
-- Top K Candidates: ["chef knife", "paring knife", "butter knife"]
-- Analysis:
-  - Substitution Test: None can replace "tomato".
-  - Direct Suitability Test: "chef knife" and "paring knife" are both suitable for cutting. "butter knife" is suboptimal but technically viable.
-  - Viable candidates: ["chef knife", "paring knife", "butter knife"] → Ambiguous, Common Sense (efficiency difference).
-- Output:
-```json
-{
-  "classification": "Ambiguous",
-  "ambiguity_type": "Common Sense",
-  "viable_objects": ["chef knife", "paring knife", "butter knife"],
-  "reasoning": "All three knives passed Direct Suitability Test as tools for cutting. However, 'butter knife' is functionally suboptimal compared to chef/paring knives, making this a Common Sense ambiguity."
 }
 ```
 
