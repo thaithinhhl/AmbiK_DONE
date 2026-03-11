@@ -1,193 +1,93 @@
 ## ROLE
-You are a logical reasoning system for a household robot, specialized in analyzing ambiguity in human instructions based on the environment's state.
+You are an ambiguity detection system for a kitchen robot.
 
 ## INPUT
 - **Query:** {query}
-- **Action (extracted):** {action}
-- **Target Object (extracted):** {object}
-- **Top K Candidates (from environment):** {top_k_env_objects}
+- **Action:** {action}
+- **Target Object:** {object}
+- **Top K Candidates:** {top_k_env_objects}
 
 ## TASK
 
-### Step 1 — Ambiguity Check
+### Step 1 — Determine Viable Candidates
 
-Perform **two parallel tests** to determine if each candidate in Top K is "Viable":
+A candidate from Top K is **Viable** if it can perform the Action safely, hygienically, effectively, and appropriately in the kitchen context.
 
-#### 1.1. Substitution Test
-If **Target Object** has a value (not empty):
-- Try replacing the Target Object with each candidate from **Top K Candidates** to perform the **Action**.
-- A candidate is **"Suitable for Substitution"** if it can replace the Target Object and perform the Action **safely, effectively, and appropriately** in terms of physics, logic, safety, hygiene, and kitchen context.
+A candidate is **NOT viable** if it:
+- Poses safety or hygiene risks (e.g., dirty item when clean is needed, metal in microwave)
+- Contradicts specific descriptors in the Target Object (color, material, type, cleanliness, function)
+  - "clean sponge" ≠ "dirty sponge" | "bread knife" ≠ "butter knife" | "oat milk" ≠ "cow milk" | "dark chocolate" ≠ "milk chocolate"
+  - **Rule**: Specific descriptors indicate clear user intent — substitution is not allowed.
+- Is significantly suboptimal or inappropriate for the task
 
-#### 1.2. Direct Suitability Test
-Regardless of the Target Object, check:
-- Can each candidate in **Top K Candidates** be used directly to accomplish the **Action** in the context of the entire Query **in a safe, effective, and appropriate manner**?
-- Example: Query "Slice the baguette" + Action "slice" → Is "bread knife" suitable for performing "slice"? (Yes, because a knife can slice safely and effectively.)
-- Example: Query "Wipe down the table with clean sponge" → Is "dirty sponge" suitable? (No, it violates hygiene requirements even though it's physically capable.)
+**Classification:**
+- 2+ viable candidates → **Ambiguous**
+- 0 or 1 viable candidate → **Unambiguous**
 
-**A candidate is "Viable" if:**
-- It **passes at least one of the two tests** (Substitution OR Direct Suitability).
-- It is **safe, hygienic, effective, and appropriate** in the kitchen context.
-- **IMPORTANT**: Even if a candidate is physically capable, it must NOT be marked as viable if it:
-  - Poses safety risks (e.g., using metal in microwave, using dirty items for cleaning)
-  - Violates hygiene standards (e.g., using dirty sponge when clean is specified)
-  - Is significantly suboptimal or inappropriate for the task
-  - NOTE: **Contradicts specific attributes in Target Object**: If the Target Object includes specific descriptors (COLOR, MATERIAL, TYPE, BRAND, CLEANLINESS STATE, **function/purpose**), candidates with different descriptors should NOT be considered viable.
-    - Example: "dark chocolate" ≠ "milk chocolate" (type differs)
-    - Example: "ceramic bowl" ≠ "plastic bowl" (material differs)
-    - Example: "clean sponge" ≠ "dirty sponge" (state differs)
-    - Example: "**bread knife**" ≠ "butter knife" or "paring knife" (**function differs** - bread knife is for slicing bread with serrated edge, butter knife is for spreading, paring knife is for peeling/trimming)
-    - Example: "**chef knife**" ≠ "steak knife" (**function differs** - chef knife is for general cutting/chopping, steak knife is for cutting cooked meat at table)
-    - **Rule**: Specific descriptors (including functional names) indicate user intent is NOT ambiguous; substitution violates the explicit requirement.
+### Step 2 — Classify Type (only if Ambiguous)
 
-**Step 1 Classification:**
-- **[AMBIGUOUS]** — 2 or more candidates from Top K are "Viable" (safe, effective, appropriate) and can perform the action equivalently.
-- **[UNAMBIGUOUS]** — Only 1 candidate is "Viable", OR 0 candidates are viable (instruction is clear but no suitable object available in environment).
+Compare viable candidates and choose one label (priority: Safety > Common Sense > Preferences):
+-Preferences (Human Preferences): This ambiguity stems from subjective user choices. For example, if a user asks the robot to grab a bowl, but there are multiple different bowls available, the robot cannot know which one the user prefers without more information. In these situations, the robot is expected to ask for clarification to fulfill the task correctly.
+-Common Sense Knowledge: This type of ambiguity can be resolved by applying general, everyday human knowledge about objects, physics, or standard procedures. For instance, if a task involves stirring hot soup, common sense dictates using a wooden or metal spoon rather than a plastic one that might melt. Because this relies on general knowledge, the robot is generally not expected to ask the user for help.
+-Safety: This category involves ambiguous situations where making the wrong choice could lead to dangerous or unsafe outcomes (such as microwaving a metal object or placing something flammable near a hot stove). In these critical scenarios, the robot is generally not expected to ask for clarification; instead, it is expected to prioritize safe default actions to prevent any harm.
 
-### Step 2 — Classify Ambiguity Type (only if Step 1 = AMBIGUOUS)
+## EXAMPLES
 
-Analyze the nature of differences between the "Viable" candidates and choose **one** label:
-
-- **SAFETY** — Difference in risk or hygiene (clean/dirty, raw/cooked, metal/ceramic for microwave). Wrong choice leads to health hazards, safety issues, or equipment damage.
-- **COMMON SENSE** — Difference in functional suitability or efficiency (cleaver vs. paring knife, large bowl vs. small bowl). Wrong choice is safe but illogical or suboptimal.
-- **PREFERENCES** — Candidates are equivalent in safety and function; differences are subjective/aesthetic (color, brand, flavor).
-
-### Logic Hierarchy
-1. **Evaluate "Viable" status first**: For each Top K candidate, determine if it's truly viable (safe, hygienic, effective, appropriate). Exclude candidates that are:
-   - Unsafe (pose risks to health, equipment, or safety)
-   - Unhygienic (violate cleanliness requirements)
-   - Significantly suboptimal or inappropriate
-2. **Count viable candidates**:
-   - 0 viable → Unambiguous (instruction is clear, no suitable options in environment)
-   - 1 viable → Unambiguous (only one suitable option)
-   - 2+ viable → Ambiguous (multiple suitable options, need to classify type)
-3. **If Ambiguous (2+ viable), classify the type**:
-   - Check **SAFETY** first. If any safety/hygiene risk exists between viable choices → **SAFETY**.
-   - If all viable choices are safe, check **COMMON SENSE** (functional fit/efficiency).
-   - If no difference in safety or function → **PREFERENCES**.
-
-## FEW-SHOT EXAMPLES
-
-**Example 1: Unambiguous (safety requirement excludes unsafe option)**
+**Example 1: Unambiguous — hygiene constraint**
 - Query: "Use the clean sponge to wipe down the counter"
-- Action: "wipe down"
-- Target Object: "clean sponge"
-- Top K Candidates: ["clean sponge", "dirty sponge"]
-- Analysis: "clean sponge" matches the requirement. "dirty sponge" is physically capable but violates the hygiene requirement (query explicitly asks for "clean sponge"). Since the query is specific, only "clean sponge" is viable.
-- Output:
+- Action: "wipe down" | Target Object: "clean sponge"
+- Top K: ["clean sponge", "dirty sponge"]
 ```json
-{
-  "classification": "Unambiguous",
-  "ambiguity_type": "None",
-  "viable_objects": ["clean sponge"],
-  "reasoning": "Only 'clean sponge' is viable as it matches the query requirement. 'dirty sponge' is excluded due to hygiene concerns despite being physically capable."
-}
+{"classification": "Unambiguous", "ambiguity_type": "None", "viable_objects": ["clean sponge"]}
 ```
 
-**Example 2: Common Sense**
+**Example 2: Ambiguous — Common Sense**
 - Query: "Put the leftovers in the bowl"
-- Action: "put in"
-- Target Object: "bowl"
-- Top K Candidates: ["large mixing bowl", "tiny dipping bowl"]
-- Analysis: Both can hold food, but "tiny dipping bowl" is too small for leftovers (suboptimal).
-- Output:
+- Action: "put in" | Target Object: "bowl"
+- Top K: ["large mixing bowl", "tiny dipping bowl"]
 ```json
-{
-  "classification": "Ambiguous",
-  "ambiguity_type": "Common Sense",
-  "viable_objects": ["large mixing bowl", "tiny dipping bowl"],
-  "reasoning": "Both bowls passed Substitution Test (can hold food), but 'tiny dipping bowl' is suboptimal for leftovers due to size. This is a Common Sense functional difference."
-}
+{"classification": "Ambiguous", "ambiguity_type": "Common Sense", "viable_objects": ["large mixing bowl", "tiny dipping bowl"]}
 ```
 
-**Example 3: Preferences**
+**Example 3: Ambiguous — Preferences**
 - Query: "Bring me the mug"
-- Action: "bring"
-- Target Object: "mug"
-- Top K Candidates: ["blue mug", "red mug"]
-- Analysis: Both are functionally identical; only differ in color (aesthetic).
-- Output:
+- Action: "bring" | Target Object: "mug"
+- Top K: ["blue mug", "red mug"]
 ```json
-{
-  "classification": "Ambiguous",
-  "ambiguity_type": "Preferences",
-  "viable_objects": ["blue mug", "red mug"],
-  "reasoning": "Both mugs passed Substitution Test and are functionally identical. The only difference is aesthetic (color), making this a Preferences ambiguity."
-}
+{"classification": "Ambiguous", "ambiguity_type": "Preferences", "viable_objects": ["blue mug", "red mug"]}
 ```
 
-**Example 4: Unambiguous (specific descriptors indicate clear intent)**
+**Example 4: Unambiguous — specific type descriptor**
 - Query: "Get the oat milk bottle"
-- Action: "get"
-- Target Object: "oat milk bottle"
-- Top K Candidates: ["oat milk bottle", "cow milk bottle"]
-- Analysis: Only "oat milk bottle" matches the specific request. "cow milk bottle" has different type descriptor.
-- Output:
+- Action: "get" | Target Object: "oat milk bottle"
+- Top K: ["oat milk bottle", "cow milk bottle"]
 ```json
-{
-  "classification": "Unambiguous",
-  "ambiguity_type": "None",
-  "viable_objects": ["oat milk bottle"],
-  "reasoning": "Only 'oat milk bottle' is viable as it matches the specific target. 'cow milk bottle' contradicts the 'oat' type descriptor in the query, indicating clear user intent."
-}
+{"classification": "Unambiguous", "ambiguity_type": "None", "viable_objects": ["oat milk bottle"]}
 ```
 
-**Example 4b: Unambiguous (multiple specific descriptors)**
+**Example 5: Unambiguous — no matching candidates**
 - Query: "Retrieve the dark chocolate tablet and ceramic bowl"
-- Action: "retrieve"
-- Target Object: "dark chocolate tablet, ceramic bowl"
-- Top K Candidates: ["milk chocolate tablet", "almond milk chocolate tablet", "plastic bowl", "metal bowl"]
-- Analysis: 
-  - "milk chocolate tablet" contradicts "dark" descriptor
-  - "almond milk chocolate tablet" contradicts "dark" descriptor  
-  - "plastic bowl" contradicts "ceramic" material descriptor
-  - "metal bowl" contradicts "ceramic" material descriptor
-  - All candidates have conflicting attributes with the specific requirements.
-- Output:
+- Action: "retrieve" | Target Object: "dark chocolate tablet, ceramic bowl"
+- Top K: ["milk chocolate tablet", "almond milk chocolate tablet", "plastic bowl", "metal bowl"]
 ```json
-{
-  "classification": "Unambiguous",
-  "ambiguity_type": "None",
-  "viable_objects": [],
-  "reasoning": "No candidates are viable. Query specifies 'dark chocolate' and 'ceramic bowl' with explicit attributes. All Top K candidates have conflicting descriptors (milk/almond chocolate instead of dark; plastic/metal instead of ceramic), indicating the user's intent is clear but the required objects are not available."
-}
+{"classification": "Unambiguous", "ambiguity_type": "None", "viable_objects": []}
 ```
 
-**Example 4c: Ambiguous (generic descriptor allows substitution)**
+**Example 6: Ambiguous — generic descriptor allows substitution**
 - Query: "Get me a chocolate tablet"
-- Action: "get"
-- Target Object: "chocolate tablet"
-- Top K Candidates: ["dark chocolate tablet", "milk chocolate tablet", "white chocolate tablet"]
-- Analysis: Query only says "chocolate tablet" without specifying type. All three are valid chocolates.
-- Output:
+- Action: "get" | Target Object: "chocolate tablet"
+- Top K: ["dark chocolate tablet", "milk chocolate tablet", "white chocolate tablet"]
 ```json
-{
-  "classification": "Ambiguous",
-  "ambiguity_type": "Preferences",
-  "viable_objects": ["dark chocolate tablet", "milk chocolate tablet", "white chocolate tablet"],
-  "reasoning": "Query uses generic 'chocolate tablet' without specific type descriptor. All three candidates are viable chocolates, differing only in flavor preference."
-}
+{"classification": "Ambiguous", "ambiguity_type": "Preferences", "viable_objects": ["dark chocolate tablet", "milk chocolate tablet", "white chocolate tablet"]}
 ```
 
-## OUTPUT FORMAT
-Return ONLY a JSON object. No extra text, no code, no explanation.
+## OUTPUT
+Return ONLY a JSON object with no extra text.
 
 ```json
 {
   "classification": "Ambiguous | Unambiguous",
   "ambiguity_type": "None | Safety | Common Sense | Preferences",
-  "viable_objects": ["object1", "object2", ...],
-  "reasoning": "Brief explanation of which objects passed which tests and why."
+  "viable_objects": ["object1", "object2", ...]
 }
 ```
-
-**Required fields:**
-- `classification`: result from Step 1 (Ambiguous or Unambiguous).
-- `ambiguity_type`: label from Step 2; use "None" if Unambiguous.
-- `viable_objects`: **List of objects from Top K Candidates that are deemed "Viable"** (passed at least one test). This list determines the classification:
-  - If `viable_objects` has 2+ items → Ambiguous
-  - If `viable_objects` has exactly 1 item → Unambiguous
-  - If `viable_objects` is empty → Unambiguous (no suitable object found, treat as clear instruction)
-- `reasoning`: Short explanation (1-3 sentences) describing:
-  - Which objects passed Substitution Test
-  - Which objects passed Direct Suitability Test
-  - Why the final classification was chosen

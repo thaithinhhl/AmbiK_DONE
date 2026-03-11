@@ -30,6 +30,11 @@ class SessionStore:
             all_sessions.append(session)
         HISTORY_FILE.write_text(json.dumps(all_sessions, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def delete_session(self, session_id):
+        all_sessions = self.load_all()
+        all_sessions = [s for s in all_sessions if s["session_id"] != session_id]
+        HISTORY_FILE.write_text(json.dumps(all_sessions, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def add_turn(self, session_id, task, environment, user_message, robot_message):
         all_sessions = self.load_all()
         session = next((s for s in all_sessions if s["session_id"] == session_id), None)
@@ -38,12 +43,7 @@ class SessionStore:
                 "session_id": session_id,
                 "task": task,
                 "environment": environment,
-                "history": [
-                    {
-                        "user_message": user_message,
-                        "robot_message": robot_message
-                    }
-                ]
+                "history": [],
             }
             all_sessions.append(session)
         session["history"].append({"user_message": user_message, "robot_message": robot_message})

@@ -162,6 +162,23 @@ class TaskHandler:
             "classification": classification
         }
 
+    def clarify_step(self, clarification, pending_step, pending_entities, pending_top_objects):
+        """Re-classify với top_k gốc — skip entity extraction và embedding."""
+        step_query = f"{pending_step} [User specified: {clarification}]"
+        classification = None
+        if self.classifier:
+            classification = self.classifier.classify(
+                self.current_task,
+                step_query,
+                pending_entities,
+                pending_top_objects,
+            )
+        return {
+            "entities": pending_entities,
+            "top_objects": pending_top_objects,
+            "classification": classification,
+        }
+
 
 class ResponseGenerator:
     def __init__(self, llm_instance, prompt_path=None):
@@ -174,22 +191,30 @@ class ResponseGenerator:
         except Exception:
             self.prompt_template = None
     
-    def generate(self, query, classification_result, action=""):
+    def generate(self, query, classification_result, action="", history=None):
         status = classification_result.get("status", "Unambiguous")
         viable = classification_result.get("viable_objects", [])
         label = classification_result.get("label", "None")
-        
-        # Fallback nếu không có prompt template
+
         if not self.prompt_template:
             return self._fallback(query, status, viable)
-        
+
+        history_text = "(none)"
+        if history:
+            lines = []
+            for turn in history[-3:]:
+                lines.append(f"User: {turn['user_message']}")
+                lines.append(f"Robot: {turn['robot_message']}")
+            history_text = "\n".join(lines)
+
         prompt = self.prompt_template
         prompt = prompt.replace("{query}", query)
         prompt = prompt.replace("{classification}", status)
         prompt = prompt.replace("{ambiguity_type}", label)
         prompt = prompt.replace("{viable_objects}", json.dumps(viable))
         prompt = prompt.replace("{action}", action)
-        
+        prompt = prompt.replace("{history}", history_text)
+
         try:
             return self.llm.generate(prompt).strip()
         except Exception:
@@ -206,7 +231,7 @@ if __name__ == "__main__":
     # Model generate: dùng cho extract entities và classify ambiguity
     dataset_path = Path(__file__).resolve().parent.parent / "ambik_dataset" / "ambik_test_900.csv"
 
-    llm = LLM("ollama:llama3.1:8b", {"max_new_tokens": 150, "temperature": 0.7})
+    llm = LLM("ollama:qwen2.5:32b", {"max_new_tokens": 150, "temperature": 0.7})
     embed_model = LLM("ollama:mxbai-embed-large:latest", {})
     
     # Trích xuất entity từ step task current và tìm environment phù hợp của task đó
@@ -244,18 +269,33 @@ if __name__ == "__main__":
         "history": [],
     })
 
+    clarification_pending = False
+    pending_step = None
+    pending_entities = None
+    pending_top_objects = None
+    conversation_history = []
+
     print(f'(Say "{FAREWELL}" to end the session.)')
     while True:
         query = input("\nEnter step query: ").strip()
 
         if query.lower() == FAREWELL:
+            session_store.delete_session(session_id)
             print("You're welcome! Goodbye.")
             break
 
         if not query:
             continue
 
-        result = handler.handle_step(query)
+        # Nếu đang chờ clarification: skip embedding, re-classify với top_k gốc
+        if clarification_pending:
+            result = handler.clarify_step(query, pending_step, pending_entities, pending_top_objects)
+            clarification_pending = False
+            pending_step = None
+            pending_entities = None
+            pending_top_objects = None
+        else:
+            result = handler.handle_step(query)
 
         entities = result.get("entities", {})
         if isinstance(entities, dict):
@@ -283,8 +323,18 @@ if __name__ == "__main__":
                 print(f"  Viable Objects: {viable}")
 
             action_str = ", ".join(actions) if actions else ""
-            robot_response = responder.generate(query, cls, action_str)
+            robot_response = responder.generate(query, cls, action_str, history=conversation_history)
             print(f"\n Robot: {robot_response}")
+
+            # Nếu vẫn còn mơ hồ, lưu context gốc và chờ clarification
+            if cls.get("status") == "Ambiguous":
+                clarification_pending = True
+                pending_step = query
+                pending_entities = entities
+                pending_top_objects = result.get("top_objects", [])
+
+        conversation_history.append({"user_message": query, "robot_message": robot_response})
+        conversation_history = conversation_history[-3:]
 
         session_store.add_turn(session_id, task, handler.environment, query, robot_response)
 

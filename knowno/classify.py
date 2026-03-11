@@ -75,29 +75,31 @@ class AmbiguityClassifier:
                 "viable_objects": [],
             }
         
-        # Prompt trả về: classification, ambiguity_type, viable_objects, reasoning
-        # Map sang: status, label, viable_objects, reasoning
         status = result.get("classification", result.get("status", "Unambiguous"))
         label = result.get("ambiguity_type", result.get("label", "None"))
         viable_objects = result.get("viable_objects", [])
-        reasoning = result.get("reasoning", "")
         
         # VALIDATION: viable_objects phải là subset của top_k_list (tránh LLM hallucination)
         if viable_objects and isinstance(viable_objects, list):
             top_k_set = set(obj.lower().strip() for obj in top_k_list)
             validated_viable = [
-                obj for obj in viable_objects 
+                obj for obj in viable_objects
                 if obj and obj.lower().strip() in top_k_set
             ]
             if len(validated_viable) < len(viable_objects):
                 print("[Warning] LLM hallucination: viable_objects không nằm trong Top K.")
             viable_objects = validated_viable
-        
+            
+        if len(viable_objects) >= 2:
+            status = "Ambiguous"
+        else:
+            status = "Unambiguous"
+            label = "None"
+
         return {
-            "status": str(status).strip(),
-            "label": str(label).strip(),
+            "status": status,
+            "label": label,
             "viable_objects": viable_objects if isinstance(viable_objects, list) else [],
-            "reasoning": str(reasoning).strip() if reasoning else ""
         }
 
 
@@ -112,6 +114,6 @@ if __name__ == "__main__":
     from llm import LLM
     
     # Test
-    model = LLM("ollama:llama3.1:8b", {"max_new_tokens": 150, "temperature": 0.7})
+    model = LLM("ollama:qwen2.5:32b", {"max_new_tokens": 150, "temperature": 0.7})
     classifier = AmbiguityClassifier(model)
     
