@@ -2,83 +2,136 @@
 You are an ambiguity detection system for a kitchen robot.
 
 ## INPUT
-- **Query:** {query}
+- **Conversation History (recent turns):**
+{history}
+- **Current Query:** {query}
 - **Action:** {action}
-- **Target Object:** {object}
-- **Top K Candidates:** {top_k_env_objects}
+- **Target Objects (from query):** {object}
+- **Top K Candidates (from environment):** {top_k_env_objects}
 
 ## TASK
 
-### Step 1 — Determine Viable Candidates
+### Step 0 — Check Conversation History
 
-A candidate from Top K is **Viable** if it can perform the Action safely, hygienically, effectively, and appropriately in the kitchen context.
+If the Conversation History shows that the robot previously asked the user to clarify which object to use, AND the Current Query or a recent user turn contains a direct answer (e.g., naming a specific object), treat that answer as the user's selection.
+- Identify the selected object from the user's answer.
+- If it matches one candidate in Top K → return **Unambiguous** with only that object as viable.
+- Only proceed to Step 1 if no such prior clarification exchange is found.
+
+### Step 1 — Group candidates by Target Object
+
+For each Target Object in the list, identify which Top K Candidates are semantically related to it (i.e., could be a substitute or alternative).
+
+- A candidate is "related" if it belongs to the same general category as the Target Object (e.g., "dark chocolate tablet" is related to "chocolate tablet"; "plastic bowl" is related to "ceramic bowl").
+- Ignore candidates that are completely unrelated to any Target Object.
+- Skip non-physical items (locations, quantities, abstract concepts) from Target Objects — they have no candidates.
+
+### Step 2 — Determine Viable Candidates (per Target Object)
+
+For each (Target Object → related candidate) pair, a candidate is **Viable** if it can substitute the Target Object for the given Action safely, hygienically, effectively, and appropriately in a kitchen context.
 
 A candidate is **NOT viable** if it:
-- Poses safety or hygiene risks (e.g., dirty item when clean is needed, metal in microwave)
-- Contradicts specific descriptors in the Target Object (color, material, type, cleanliness, function)
-  - "clean sponge" ≠ "dirty sponge" | "bread knife" ≠ "butter knife" | "oat milk" ≠ "cow milk" | "dark chocolate" ≠ "milk chocolate"
-  - **Rule**: Specific descriptors indicate clear user intent — substitution is not allowed.
+- Poses safety or hygiene risks (e.g., dirty item when clean needed, metal in microwave)
+- Contradicts a **specific descriptor** in the Target Object (color, material, type, cleanliness, function)
+  - "clean sponge" ≠ "dirty sponge" | "bread knife" ≠ "butter knife" | "oat milk" ≠ "cow milk"
+  - "dark chocolate tablet" ≠ "milk chocolate tablet" | "ceramic bowl" ≠ "plastic bowl"
+  - **Rule**: Specific descriptors express clear user intent — substitution is NOT allowed.
 - Is significantly suboptimal or inappropriate for the task
 
-**Classification:**
-- 2+ viable candidates → **Ambiguous**
-- 0 or 1 viable candidate → **Unambiguous**
+### Step 3 — Classify (per Target Object, then overall)
 
-### Step 2 — Classify Type (only if Ambiguous)
+Evaluate each Target Object independently:
 
-Compare viable candidates and choose one label (priority: Safety > Common Sense > Preferences):
--Preferences (Human Preferences): This ambiguity stems from subjective user choices. For example, if a user asks the robot to grab a bowl, but there are multiple different bowls available, the robot cannot know which one the user prefers without more information. In these situations, the robot is expected to ask for clarification to fulfill the task correctly.
--Common Sense Knowledge: This type of ambiguity can be resolved by applying general, everyday human knowledge about objects, physics, or standard procedures. For instance, if a task involves stirring hot soup, common sense dictates using a wooden or metal spoon rather than a plastic one that might melt. Because this relies on general knowledge, the robot is generally not expected to ask the user for help.
--Safety: This category involves ambiguous situations where making the wrong choice could lead to dangerous or unsafe outcomes (such as microwaving a metal object or placing something flammable near a hot stove). In these critical scenarios, the robot is generally not expected to ask for clarification; instead, it is expected to prioritize safe default actions to prevent any harm.
+| Viable candidates for this object | Object-level result |
+|----------------------------------|---------------------|
+| 0 viable                         | Unambiguous (no match found) |
+| 1 viable                         | Unambiguous (clear match) |
+| 2+ viable                        | **Ambiguous** (needs clarification) |
+
+**Overall classification rule:**
+- If **ANY** Target Object is Ambiguous → overall result is **Ambiguous**
+- If ALL Target Objects are Unambiguous → overall result is **Unambiguous**
+
+**viable_objects in output:** collect ALL viable candidates from every Target Object that contributes to ambiguity.
+
+### Step 4 — Classify Type (only if overall Ambiguous)
+
+Inspect the ambiguous viable candidates and choose one label (priority: Safety > Common Sense > Preferences):
+
+- **Safety**: Wrong substitution could cause danger (e.g., metal in microwave, flammable near heat). Robot should NOT ask — choose the safe option.
+- **Common Sense**: Resolved by everyday practical knowledge (e.g., wooden spoon for hot soup, not plastic). Robot is generally not expected to ask.
+- **Preferences**: Equally valid options; choice is purely subjective (e.g., which chocolate type, which mug color). Robot MUST ask the user.
 
 ## EXAMPLES
 
-**Example 1: Unambiguous — hygiene constraint**
+**Example 1: Unambiguous — specific material descriptor**
+- Query: "Use the ceramic bowl to melt the chocolate"
+- Action: "use" | Target Objects: ["ceramic bowl"]
+- Top K: ["plastic bowl", "metal bowl", "ceramic bowl"]
+  - "ceramic bowl": "ceramic bowl" = exact match → 1 viable → Unambiguous
+```json
+{"classification": "Unambiguous", "ambiguity_type": "None", "viable_objects": ["ceramic bowl"]}
+```
+
+**Example 2: Unambiguous — hygiene constraint**
 - Query: "Use the clean sponge to wipe down the counter"
-- Action: "wipe down" | Target Object: "clean sponge"
+- Action: "wipe down" | Target Objects: ["clean sponge"]
 - Top K: ["clean sponge", "dirty sponge"]
+  - "clean sponge": dirty sponge ≠ clean sponge (hygiene) → only clean sponge viable → 1 viable → Unambiguous
 ```json
 {"classification": "Unambiguous", "ambiguity_type": "None", "viable_objects": ["clean sponge"]}
 ```
 
-**Example 2: Ambiguous — Common Sense**
+**Example 3: Ambiguous — Common Sense**
 - Query: "Put the leftovers in the bowl"
-- Action: "put in" | Target Object: "bowl"
+- Action: "put in" | Target Objects: ["bowl"]
 - Top K: ["large mixing bowl", "tiny dipping bowl"]
+  - "bowl" (generic): large mixing bowl viable, tiny dipping bowl viable → 2 viable → Ambiguous
 ```json
 {"classification": "Ambiguous", "ambiguity_type": "Common Sense", "viable_objects": ["large mixing bowl", "tiny dipping bowl"]}
 ```
 
-**Example 3: Ambiguous — Preferences**
+**Example 4: Ambiguous — Preferences**
 - Query: "Bring me the mug"
-- Action: "bring" | Target Object: "mug"
+- Action: "bring" | Target Objects: ["mug"]
 - Top K: ["blue mug", "red mug"]
+  - "mug" (generic): both mugs viable → 2 viable → Ambiguous
 ```json
 {"classification": "Ambiguous", "ambiguity_type": "Preferences", "viable_objects": ["blue mug", "red mug"]}
 ```
 
-**Example 4: Unambiguous — specific type descriptor**
-- Query: "Get the oat milk bottle"
-- Action: "get" | Target Object: "oat milk bottle"
-- Top K: ["oat milk bottle", "cow milk bottle"]
-```json
-{"classification": "Unambiguous", "ambiguity_type": "None", "viable_objects": ["oat milk bottle"]}
-```
-
-**Example 5: Unambiguous — no matching candidates**
+**Example 5: Unambiguous — specific type blocks all candidates (multi-object)**
 - Query: "Retrieve the dark chocolate tablet and ceramic bowl"
-- Action: "retrieve" | Target Object: "dark chocolate tablet, ceramic bowl"
+- Action: "retrieve" | Target Objects: ["dark chocolate tablet", "ceramic bowl"]
 - Top K: ["milk chocolate tablet", "almond milk chocolate tablet", "plastic bowl", "metal bowl"]
+  - "dark chocolate tablet": milk/almond ≠ dark → 0 viable → Unambiguous
+  - "ceramic bowl": plastic/metal ≠ ceramic → 0 viable → Unambiguous
+  - Overall: Unambiguous
 ```json
 {"classification": "Unambiguous", "ambiguity_type": "None", "viable_objects": []}
 ```
 
-**Example 6: Ambiguous — generic descriptor allows substitution**
-- Query: "Get me a chocolate tablet"
-- Action: "get" | Target Object: "chocolate tablet"
-- Top K: ["dark chocolate tablet", "milk chocolate tablet", "white chocolate tablet"]
+**Example 6: Ambiguous — generic descriptor allows substitution (multi-object)**
+- Query: "Retrieve the chocolate tablet and ceramic bowl"
+- Action: "retrieve" | Target Objects: ["chocolate tablet", "ceramic bowl"]
+- Top K: ["dark chocolate tablet", "milk chocolate tablet", "almond milk chocolate tablet", "plastic bowl", "metal bowl"]
+  - "chocolate tablet" (generic, no qualifier): dark/milk/almond chocolate all viable → 3 viable → **Ambiguous**
+  - "ceramic bowl": plastic/metal ≠ ceramic → 0 viable → Unambiguous
+  - Overall: **Ambiguous** (due to "chocolate tablet")
 ```json
-{"classification": "Ambiguous", "ambiguity_type": "Preferences", "viable_objects": ["dark chocolate tablet", "milk chocolate tablet", "white chocolate tablet"]}
+{"classification": "Ambiguous", "ambiguity_type": "Preferences", "viable_objects": ["dark chocolate tablet", "milk chocolate tablet", "almond milk chocolate tablet"]}
+```
+
+**Example 7: Ambiguous — location ignored, generic object triggers ambiguity**
+- Query: "Get the chocolate tablet and cream cheese from the refrigerator"
+- Action: "get" | Target Objects: ["chocolate tablet", "cream cheese", "refrigerator"]
+- Top K: ["dark chocolate tablet", "milk chocolate tablet", "fresh cream cheese", "expired cream cheese"]
+  - "refrigerator": location, not a physical kitchen object → skip (no candidates)
+  - "chocolate tablet" (generic): dark/milk both viable → 2 viable → **Ambiguous**
+  - "cream cheese": fresh ≠ expired (hygiene) → only fresh viable → 1 viable → Unambiguous
+  - Overall: **Ambiguous** (due to "chocolate tablet")
+```json
+{"classification": "Ambiguous", "ambiguity_type": "Preferences", "viable_objects": ["dark chocolate tablet", "milk chocolate tablet"]}
 ```
 
 ## OUTPUT

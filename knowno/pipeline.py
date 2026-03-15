@@ -115,7 +115,7 @@ class TaskHandler:
         return (
             f"I have received the task. Now, please provide the specific steps you want me to perform." )
 
-    def handle_step(self, step_query, environment=None):
+    def handle_step(self, step_query, environment=None, history=None):
         """
         Giai đoạn 2: Xử lý từng bước (query). Với query thì thực hiện extract.
         Tìm top 5 vật thể phù hợp nhất từ environment và classify ambiguity.
@@ -153,7 +153,8 @@ class TaskHandler:
                 self.current_task,
                 step_query,
                 self.entities,
-                top_objects
+                top_objects,
+                history=history,
             )
         
         return {
@@ -162,7 +163,7 @@ class TaskHandler:
             "classification": classification
         }
 
-    def clarify_step(self, clarification, pending_step, pending_entities, pending_top_objects):
+    def clarify_step(self, clarification, pending_step, pending_entities, pending_top_objects, history=None):
         """Re-classify với top_k gốc — skip entity extraction và embedding."""
         step_query = f"{pending_step} [User specified: {clarification}]"
         classification = None
@@ -172,6 +173,7 @@ class TaskHandler:
                 step_query,
                 pending_entities,
                 pending_top_objects,
+                history=history,
             )
         return {
             "entities": pending_entities,
@@ -244,7 +246,7 @@ if __name__ == "__main__":
 
     session_store = SessionStore()
 
-    GREETING = 'hey, robot kitchen'
+    GREETING = 'hi, robot kitchen'
     FAREWELL = 'thank you, robot kitchen'
 
     print(f'Say "{GREETING}" to start a session.')
@@ -289,13 +291,16 @@ if __name__ == "__main__":
 
         # Nếu đang chờ clarification: skip embedding, re-classify với top_k gốc
         if clarification_pending:
-            result = handler.clarify_step(query, pending_step, pending_entities, pending_top_objects)
+            result = handler.clarify_step(
+                query, pending_step, pending_entities, pending_top_objects,
+                history=conversation_history,
+            )
             clarification_pending = False
             pending_step = None
             pending_entities = None
             pending_top_objects = None
         else:
-            result = handler.handle_step(query)
+            result = handler.handle_step(query, history=conversation_history)
 
         entities = result.get("entities", {})
         if isinstance(entities, dict):

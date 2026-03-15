@@ -1,4 +1,6 @@
 import sys
+sys.dont_write_bytecode = True
+
 import re
 import html as _html
 import base64
@@ -362,6 +364,7 @@ header[data-testid="stHeader"] { background: transparent; }
                     original_pending_step,
                     st.session_state.pending_entities,
                     st.session_state.pending_top_objects,
+                    history=st.session_state.conversation_history,
                 )
                 # Reset clarification state trước khi xử lý kết quả
                 st.session_state.clarification_pending = False
@@ -369,7 +372,7 @@ header[data-testid="stHeader"] { background: transparent; }
                 st.session_state.pending_entities = None
                 st.session_state.pending_top_objects = None
             else:
-                result = handler.handle_step(user_input)
+                result = handler.handle_step(user_input, history=st.session_state.conversation_history)
 
             entities = result.get("entities", {})
             actions  = entities.get("actions", []) if isinstance(entities, dict) else []

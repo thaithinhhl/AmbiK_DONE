@@ -28,7 +28,7 @@ class AmbiguityClassifier:
             print(f"[Warning] Không thể đọc prompt từ {prompt_path}: {e}")
             return None
     
-    def classify(self, task, step_query, entities, top_objects):
+    def classify(self, task, step_query, entities, top_objects, history=None):
         if top_objects and isinstance(top_objects[0], tuple):
             top_k_list = [obj for obj, *_ in top_objects]
         else:
@@ -42,10 +42,20 @@ class AmbiguityClassifier:
             objects = []
         
         action_str = ", ".join(actions) if actions else ""
-        object_str = ", ".join(objects) if objects else ""
-        
+        object_str = json.dumps(objects) if objects else "[]"
+
+        # Xây dựng history text từ conversation history (tối đa 3 lượt gần nhất)
+        history_text = "(none)"
+        if history:
+            lines = []
+            for turn in history[-3:]:
+                lines.append(f"User: {turn['user_message']}")
+                lines.append(f"Robot: {turn['robot_message']}")
+            history_text = "\n".join(lines)
+
         # Thay placeholder trong prompt template
         prompt = (self.prompt_template or "")
+        prompt = prompt.replace("{history}", history_text)
         prompt = prompt.replace("{query}", step_query)
         prompt = prompt.replace("{action}", action_str)
         prompt = prompt.replace("{object}", object_str)
