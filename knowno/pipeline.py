@@ -174,6 +174,7 @@ class TaskHandler:
                 pending_entities,
                 pending_top_objects,
                 history=history,
+                is_clarification=True,
             )
         return {
             "entities": pending_entities,
@@ -289,7 +290,7 @@ if __name__ == "__main__":
         if not query:
             continue
 
-        # Nếu đang chờ clarification: skip embedding, re-classify với top_k gốc
+        # Nếu đang chờ clarification: re-classify với top_k gốc
         if clarification_pending:
             result = handler.clarify_step(
                 query, pending_step, pending_entities, pending_top_objects,

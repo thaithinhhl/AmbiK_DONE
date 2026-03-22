@@ -114,6 +114,51 @@ class LLM:
         except requests.exceptions.RequestException as e:
             raise Exception(f"Ollama API error: {e}")
 
+    def chat(self, system_prompt, user_prompt, return_logits=False):
+        """Gọi Ollama Chat API với system/user role tách biệt (ChatML)."""
+        url = f"{self.ollama_base_url}/api/chat"
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_prompt})
+
+        options = {}
+        if "max_new_tokens" in self.generation_settings:
+            options["num_predict"] = self.generation_settings["max_new_tokens"]
+        elif "max_tokens" in self.generation_settings:
+            options["num_predict"] = self.generation_settings["max_tokens"]
+        if "temperature" in self.generation_settings:
+            options["temperature"] = self.generation_settings["temperature"]
+        if "top_p" in self.generation_settings:
+            options["top_p"] = self.generation_settings["top_p"]
+        if return_logits:
+            options["logprobs"] = True
+            options["top_logprobs"] = 20
+
+        ollama_params = {
+            "model": self.ollama_model,
+            "messages": messages,
+            "stream": False,
+            "options": options,
+        }
+        if "stop" in self.generation_settings and self.generation_settings["stop"]:
+            ollama_params["stop"] = self.generation_settings["stop"]
+
+        try:
+            response = requests.post(url, json=ollama_params, timeout=120)
+            response.raise_for_status()
+            result = response.json()
+            generated_text = result.get("message", {}).get("content", "").strip()
+            if return_logits:
+                first_empty = not getattr(self, "_logprobs_warned", False)
+                logits = self._parse_logprobs(result, debug=first_empty)
+                if not logits:
+                    self._logprobs_warned = True
+                return (generated_text, [[logits]])
+            return generated_text
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Ollama Chat API error: {e}")
+
     def generate(self, prompt, return_logits=False):
         return self._call_ollama_api(prompt, return_logits=return_logits)
 
