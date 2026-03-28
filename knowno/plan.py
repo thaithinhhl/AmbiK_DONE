@@ -49,7 +49,10 @@ class TaskPlanner:
             )
 
     def _build_user_message(self, task: str, environment: list[str]) -> str:
-        env_str = ", ".join(environment) if environment else "(empty)"
+        if environment is None:
+            env_str = "Not provided"
+        else:
+            env_str = ", ".join(environment) if environment else "(empty)"
         return (
             f"User Task: {task}\n"
             f"Environment: {env_str}\n\n"
@@ -127,7 +130,8 @@ class TaskPlanner:
             {
                 "task": str,
                 "environment": list[str],
-                "steps": list[{"step_id", "action", "target_object"}]
+                "steps_with_env": list[{"step_id", "action", "target_object"}],
+                "steps_without_env": list[{"step_id", "action", "target_object"}]
             }
         """
         # Bước 1: Tìm environment từ dataset
@@ -135,22 +139,34 @@ class TaskPlanner:
         if not environment:
             print(f"[Warning] Không tìm thấy environment cho task: {ambiguous_task!r}")
 
-        # Bước 2: Gọi LLM
-        user_message = self._build_user_message(ambiguous_task, environment)
+        # Bước 2a: Gọi LLM CÓ environment
+        user_msg_with = self._build_user_message(ambiguous_task, environment)
         try:
-            response_text = self.llm.chat(self.system_prompt, user_message)
+            res_with = self.llm.chat(self.system_prompt, user_msg_with)
         except Exception as e:
-            print(f"[Error] LLM call thất bại: {e}")
-            return {"task": ambiguous_task, "environment": environment, "steps": []}
+            print(f"[Error] LLM call thất bại (với environment): {e}")
+            res_with = "[]"
+
+        # Bước 2b: Gọi LLM KHÔNG CÓ environment
+        user_msg_without = self._build_user_message(ambiguous_task, None)
+        try:
+            res_without = self.llm.chat(self.system_prompt, user_msg_without)
+        except Exception as e:
+            print(f"[Error] LLM call thất bại (không có environment): {e}")
+            res_without = "[]"
 
         # Bước 3: Parse & validate
-        raw_steps = self._parse_steps(response_text)
-        steps = self._validate_steps(raw_steps, environment)
+        raw_steps_with = self._parse_steps(res_with)
+        steps_with_env = self._validate_steps(raw_steps_with, environment)
+
+        raw_steps_without = self._parse_steps(res_without)
+        steps_without_env = self._validate_steps(raw_steps_without, [])
 
         return {
             "task": ambiguous_task,
             "environment": environment,
-            "steps": steps,
+            "steps_with_env": steps_with_env,
+            "steps_without_env": steps_without_env,
         }
 
 
@@ -181,8 +197,17 @@ if __name__ == "__main__":
         print(f"\nEnvironment found ({len(result['environment'])} items):")
         print("  " + ", ".join(result["environment"]))
 
-        print(f"\nPlan ({len(result['steps'])} steps):")
-        for step in result["steps"]:
+        print(f"\n[1] Plan WITH environment ({len(result['steps_with_env'])} steps):")
+        for step in result["steps_with_env"]:
+            if step.get("action") == "plan_step":
+                print(f"  {step['step_id']:>2}. {step['target_object']}")
+            else:
+                print(
+                    f"  {step['step_id']:>2}. [{step['action']}]  →  {step['target_object']}"
+                )
+
+        print(f"\n[2] Plan WITHOUT environment ({len(result['steps_without_env'])} steps):")
+        for step in result["steps_without_env"]:
             if step.get("action") == "plan_step":
                 print(f"  {step['step_id']:>2}. {step['target_object']}")
             else:
