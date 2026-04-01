@@ -12,6 +12,7 @@ if str(_root) not in sys.path:
 from llm import LLM
 from knowno.embedding import EnvironmentMatcher, EmbeddingSelector
 from knowno.classify import AmbiguityClassifier
+from knowno.plan import TaskPlanner
 from memory.session_store import SessionStore
 
 class EntityExtractor:    
@@ -102,6 +103,8 @@ class TaskHandler:
         self.current_task = None  # Chỉ set 1 lần qua start_task(task)
         self.environment = None   # Được set trong start_task dựa trên task
         self.entities = None      # Được set mỗi lần handle_step(query)
+        self.planned_steps = []
+        self.plan_source = None
 
     def start_task(self, task):
         """
@@ -114,6 +117,29 @@ class TaskHandler:
         
         return (
             f"I have received the task. Now, please provide the specific steps you want me to perform." )
+
+    def set_planned_steps(self, steps, source="without_env"):
+        """
+        Lưu danh sách step do planner sinh để chạy tự động.
+        """
+        self.plan_source = source
+        self.planned_steps = []
+        for idx, step in enumerate(steps or [], 1):
+            if isinstance(step, dict):
+                action = str(step.get("action", "")).strip()
+                target = str(step.get("target_object", "")).strip()
+                step_id = step.get("step_id", idx)
+                if action and action != "plan_step":
+                    text = f"{action} {target}".strip()
+                else:
+                    text = target
+                if text:
+                    self.planned_steps.append({"step_id": step_id, "text": text})
+            elif isinstance(step, str) and step.strip():
+                self.planned_steps.append({"step_id": idx, "text": step.strip()})
+
+    def get_planned_steps(self):
+        return list(self.planned_steps)
 
     def handle_step(self, step_query, environment=None, history=None):
         """
@@ -244,6 +270,7 @@ if __name__ == "__main__":
     classifier = AmbiguityClassifier(llm)
     responder = ResponseGenerator(llm)
     handler = TaskHandler(extractor, env_matcher, embedding_selector, classifier)
+    planner = TaskPlanner(llm, dataset_path=dataset_path)
 
     session_store = SessionStore()
 
@@ -262,8 +289,19 @@ if __name__ == "__main__":
     session_id = session_store.new_session_id()
     print(f"[Session started: {session_id}]")
 
-    task = input("Enter task: ")
+    task = input("Enter ambiguous task (no environment needed): ").strip()
     print(handler.start_task(task))
+
+    plan_result = planner.plan(task)
+    planned_steps = plan_result.get("steps_without_env", [])
+    handler.set_planned_steps(planned_steps, source="without_env")
+
+    if handler.get_planned_steps():
+        print(f"\nGenerated plan WITHOUT environment ({len(handler.get_planned_steps())} steps):")
+        for step in handler.get_planned_steps():
+            print(f"  {step['step_id']}. {step['text']}")
+    else:
+        print("\n[Warning] Planner did not return steps. Nothing to execute.")
 
     session_store.save_session({
         "session_id": session_id,
@@ -272,36 +310,17 @@ if __name__ == "__main__":
         "history": [],
     })
 
-    clarification_pending = False
-    pending_step = None
-    pending_entities = None
-    pending_top_objects = None
     conversation_history = []
 
-    print(f'(Say "{FAREWELL}" to end the session.)')
-    while True:
-        query = input("\nEnter step query: ").strip()
+    print(f'\n(Auto mode runs generated steps. Say "{FAREWELL}" when asked for clarification to end.)')
 
-        if query.lower() == FAREWELL:
-            session_store.delete_session(session_id)
-            print("You're welcome! Goodbye.")
-            break
+    # Chạy tuần tự các step planner sinh ra (without environment)
+    for planned in handler.get_planned_steps():
+        query = planned["text"]
+        result_query = query
+        print(f"\n[Planned Step {planned['step_id']}] {query}")
 
-        if not query:
-            continue
-
-        # Nếu đang chờ clarification: re-classify với top_k gốc
-        if clarification_pending:
-            result = handler.clarify_step(
-                query, pending_step, pending_entities, pending_top_objects,
-                history=conversation_history,
-            )
-            clarification_pending = False
-            pending_step = None
-            pending_entities = None
-            pending_top_objects = None
-        else:
-            result = handler.handle_step(query, history=conversation_history)
+        result = handler.handle_step(query, history=conversation_history)
 
         entities = result.get("entities", {})
         if isinstance(entities, dict):
@@ -332,14 +351,45 @@ if __name__ == "__main__":
             robot_response = responder.generate(query, cls, action_str, history=conversation_history)
             print(f"\n Robot: {robot_response}")
 
-            # Nếu vẫn còn mơ hồ, lưu context gốc và chờ clarification
-            if cls.get("status") == "Ambiguous":
-                clarification_pending = True
-                pending_step = query
+            # Nếu mơ hồ thì hỏi lại user, giữ đúng logic clarify hiện có
+            while cls.get("status") == "Ambiguous":
+                pending_step = result_query
                 pending_entities = entities
                 pending_top_objects = result.get("top_objects", [])
+                clarification = input("Clarification needed. Please specify your choice: ").strip()
+                if clarification.lower() == FAREWELL:
+                    session_store.delete_session(session_id)
+                    print("You're welcome! Goodbye.")
+                    sys.exit(0)
+                if not clarification:
+                    print("Please provide a clarification.")
+                    continue
 
-        conversation_history.append({"user_message": query, "robot_message": robot_response})
+                result = handler.clarify_step(
+                    clarification,
+                    pending_step,
+                    pending_entities,
+                    pending_top_objects,
+                    history=conversation_history,
+                )
+                cls = result.get("classification", {})
+                result_query = f"{pending_step} [User specified: {clarification}]"
+                action_str = ", ".join(actions) if actions else ""
+                robot_response = responder.generate(
+                    result_query,
+                    cls,
+                    action_str,
+                    history=conversation_history,
+                )
+                print(f"\n Robot (after clarification): {robot_response}")
+                if cls.get("status") == "Ambiguous":
+                    print("Still ambiguous, please clarify once more.")
+
+        conversation_history.append({"user_message": result_query, "robot_message": robot_response})
         conversation_history = conversation_history[-3:]
+        session_store.add_turn(session_id, task, handler.environment, result_query, robot_response)
 
-        session_store.add_turn(session_id, task, handler.environment, query, robot_response)
+    print("\nAll planned steps processed.")
+    session_store.delete_session(session_id)
+    print("You're welcome! Goodbye.")
+

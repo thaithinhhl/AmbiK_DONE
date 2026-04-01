@@ -86,7 +86,6 @@ class TaskPlanner:
         except json.JSONDecodeError:
             pass
 
-        # Tìm JSON array đầu tiên trong text
         arr_match = re.search(r"\[[\s\S]+\]", text)
         if arr_match:
             try:
@@ -138,7 +137,7 @@ class TaskPlanner:
         environment = self.env_matcher.find_environment(ambiguous_task)
         if not environment:
             print(f"[Warning] Không tìm thấy environment cho task: {ambiguous_task!r}")
-
+                 
         # Bước 2a: Gọi LLM CÓ environment
         user_msg_with = self._build_user_message(ambiguous_task, environment)
         try:

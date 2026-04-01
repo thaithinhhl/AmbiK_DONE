@@ -422,6 +422,7 @@ header[data-testid="stHeader"] { background: transparent; }
         st.session_state.pending_input = None
 
     # ── Render widget ─────────────────────────────────────────────────────────
+    # ── Render widget ─────────────────────────────────────────────────────────
     # Header: full-width purple bar with action buttons inside
     col_info, col_btns = st.columns([0.72, 0.28], vertical_alignment="center")
     with col_info:
